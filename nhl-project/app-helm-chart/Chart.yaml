@@ -1,0 +1,10 @@
+apiVersion:   v2
+name:         app-helm-chart
+description:  Helm Chart NHL Application
+type:         application
+version:      0.1.0
+appVersion:   "1.0.0"
+
+maintainers:
+  - name:     Sergei Golovanov
+    email:    sergei_golovanov2@epam.com

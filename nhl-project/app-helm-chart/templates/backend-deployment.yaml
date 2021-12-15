@@ -1,0 +1,70 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: {{ .Release.Name }}-backend
+  name: {{ .Release.Name }}-backend-deploy
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}-backend
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}-backend
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                  - key: app
+                    operator: In
+                    values:
+                    - {{ .Release.Name }}-backend
+              topologyKey: topology.kubernetes.io/zone
+            weight: 100
+      containers:
+        - name: {{ .Release.Name }}-backend
+          image: {{ .Values.backendimg }}
+          imagePullPolicy: Always
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "250m"
+            limits:
+              memory: "256Mi"
+              cpu: "500m"
+          ports:
+          - containerPort: 8000
+          livenessProbe:
+            httpGet:
+              scheme: HTTP
+              path: /
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          readinessProbe:
+            httpGet:
+              scheme: HTTP
+              path: /
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          env:
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  key:  dbusername
+                  name: {{ .Release.Name }}-auth-db
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  key:  dbpassword
+                  name: {{ .Release.Name }}-auth-db
+            - name: DB_HOST
+              value: {{ .Values.dbhost }}
+            - name: DB_NAME
+              value: {{ .Values.dbname }}

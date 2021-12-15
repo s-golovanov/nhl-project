@@ -1,0 +1,36 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-stat-data
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-1"
+    "helm.sh/hook-delete-policy": before-hook-creation, hook-succeeded, hook-failed
+spec:
+  backoffLimit: 5
+  template:
+    spec:
+      containers:
+      - name: {{ .Release.Name }}-stat-data
+        image: {{ .Values.statdataimg }}
+        env:
+          - name: GITHUB_USERNAME
+            valueFrom:
+              secretKeyRef:
+                key:  repousername
+                name: {{ .Release.Name }}-auth-repo
+          - name: GITHUB_TOKEN
+            valueFrom:
+              secretKeyRef:
+                key:  repotoken
+                name: {{ .Release.Name }}-auth-repo
+          - name: GITHUB_REPO
+            value: {{ .Values.reponame }}
+        volumeMounts:
+            - name: {{ .Release.Name }}-nginx-pvc
+              mountPath: /static
+      restartPolicy: OnFailure
+      volumes:
+        - name: {{ .Release.Name }}-nginx-pvc
+          persistentVolumeClaim:
+            claimName: {{ .Release.Name }}-nginx-pvc

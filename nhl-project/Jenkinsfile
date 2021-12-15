@@ -1,0 +1,202 @@
+pipeline {
+  environment {
+
+    VERSION = "${env.BRANCH_NAME}_${env.GIT_COMMIT[0..6]}"
+    REGISTRY = credentials('aws-ecr-registry')
+
+    INIT_REPO = 'hock-appl-init'
+    BACKEND_APP_REPO = 'hock-appl-backend-app'
+    GET_STATIC_REPO = 'hock-appl-get-static'
+    REGISTRY_CREDENTIAL = "ecr:us-east-2:aws-ecr-key"
+    HELM_DEPLOY_NAME = 'nhl-app'
+    HELM_CHART_NAME = 'app-helm-chart'
+
+    NS_PROD = 'prod'
+    REPOUSERNAME_PROD = credentials('repousername_prod')
+    REPONAME_PROD = credentials('reponame_prod')
+    REPOTOKEN_PROD = credentials('repotoken_prod')
+    DBNAME_PROD = credentials('dbname_prod')
+    DBUSERNAME_PROD = credentials('dbusername_prod')
+    DBHOST_PROD = credentials('dbhost_prod')
+    DBPASS_PROD = credentials('dbpassword_prod')
+
+    NS_TEST = 'test'
+    REPOUSERNAME_TEST = credentials('repousername_test')
+    REPONAME_TEST = credentials('reponame_test')
+    REPOTOKEN_TEST = credentials('repotoken_test')
+    DBNAME_TEST = credentials('dbname_test')
+    DBUSERNAME_TEST = credentials('dbusername_test')
+    DBHOST_TEST = credentials('dbhost_test')
+    DBPASS_TEST = credentials('dbpassword_test')
+
+
+  }
+
+  agent {
+    kubernetes {
+
+      yaml """
+          apiVersion: v1
+          kind: Pod
+          spec:
+            containers:
+            - name: dind
+              image: docker:20.10.11-dind-alpine3.14
+              imagePullPolicy: Always
+              resources:
+                requests:
+                  cpu: 150m
+                  memory: 128Mi
+                limits:
+                  cpu: 450m
+                  memory: 384Mi
+              tty: true
+              securityContext:
+                privileged: true
+            - name: helm
+              image: alpine/helm:3.7.2
+              imagePullPolicy: Always
+              resources:
+                requests:
+                  cpu: 150m
+                  memory: 128Mi
+                limits:
+                  cpu: 450m
+                  memory: 384Mi
+              command:
+                - cat
+              tty: true
+              securityContext:
+                privileged: true
+            - name: openjdk-nodejs
+              image: timbru31/java-node:11-alpine-jdk-14
+              imagePullPolicy: Always
+              resources:
+                requests:
+                  cpu: 150m
+                  memory: 128M
+                limits:
+                  cpu: 450m
+                  memory: 384Mi
+              command:
+                - cat
+              tty: true
+              securityContext:
+                privileged: true
+"""
+    }
+  }
+
+
+  stages {
+
+        stage('Build docker images') {
+            when {
+                anyOf
+                    { branch 'master'; branch 'development' }
+            }
+            steps {
+                container('dind') {
+                    sh ('docker build -t $REGISTRY/$INIT_REPO:$VERSION ./init/')
+                    sh ('docker build -t $REGISTRY/$BACKEND_APP_REPO:$VERSION ./backend-app/')
+                    sh ('docker build -t $REGISTRY/$GET_STATIC_REPO:$VERSION ./get-static/')
+                }
+            }
+        }
+
+        stage('Upload docker images to ECR') {
+            when {
+                anyOf
+                    { branch 'master'; branch 'development' }
+            }
+            steps {
+                container('dind') {
+                    withDockerRegistry([credentialsId: "${REGISTRY_CREDENTIAL}", url: 'https://$REGISTRY']) {
+                       sh ('docker push $REGISTRY/$INIT_REPO:$VERSION')
+                       sh ('docker push $REGISTRY/$BACKEND_APP_REPO:$VERSION')
+                       sh ('docker push $REGISTRY/$GET_STATIC_REPO:$VERSION')
+                    }
+                }
+            }
+        }
+
+        stage('SonarQube analysis') {
+            when {
+                anyOf
+                    { branch 'master'; branch 'development' }
+            }
+            steps {
+                container('openjdk-nodejs') {
+                  script {
+                    def scannerHome = tool name: 'SonarQube Scanner', type: 'hudson.plugins.sonar.SonarRunnerInstallation';
+                    withSonarQubeEnv('sonarqube') {
+                        sh "${scannerHome}/bin/sonar-scanner -Dsonar.projectKey=${HELM_DEPLOY_NAME}_${BRANCH_NAME} -Dsonar.projectVersion=${VERSION}  -Dsonar.sources=."
+                    }
+                  }
+                }
+           }
+        }
+
+        stage('Deploy app to EKS') {
+            when {
+                anyOf
+                    { branch 'master'; branch 'development' }
+            }
+            steps {
+                container('helm') {
+                  script {
+                    try {
+
+                      if (env.BRANCH_NAME == "master") {
+                          sh ('helm uninstall --wait $HELM_DEPLOY_NAME  --namespace $NS_PROD ')
+                      } else {
+                          sh ('helm uninstall --wait $HELM_DEPLOY_NAME  --namespace $NS_TEST ')
+                      }
+
+                      if (env.BRANCH_NAME == "master") {
+                          sh ('helm install --atomic $HELM_DEPLOY_NAME ./$HELM_CHART_NAME --namespace $NS_PROD \
+                               --set repousername=$REPOUSERNAME_PROD --set reponame=$REPONAME_PROD --set repotoken=$REPOTOKEN_PROD \
+                               --set initimg=$REGISTRY/$INIT_REPO:$VERSION --set backendimg=$REGISTRY/$BACKEND_APP_REPO:$VERSION --set statdataimg=$REGISTRY/$GET_STATIC_REPO:$VERSION \
+                               --set dbname=$DBNAME_PROD --set dbusername=$DBUSERNAME_PROD --set dbhost=$DBHOST_PROD --set dbpassword=$DBPASS_PROD ')
+                      } else {
+                          sh ('helm install --atomic $HELM_DEPLOY_NAME ./$HELM_CHART_NAME --namespace $NS_TEST \
+                               --set repousername=$REPOUSERNAME_TEST --set reponame=$REPONAME_TEST --set repotoken=$REPOTOKEN_TEST \
+                               --set initimg=$REGISTRY/$INIT_REPO:$VERSION --set backendimg=$REGISTRY/$BACKEND_APP_REPO:$VERSION --set statdataimg=$REGISTRY/$GET_STATIC_REPO:$VERSION \
+                               --set dbname=$DBNAME_TEST --set dbusername=$DBUSERNAME_TEST --set dbhost=$DBHOST_TEST --set dbpassword=$DBPASS_TEST ')
+                      }
+
+                    } catch(Exception a) {
+                        try {
+
+                          if (env.BRANCH_NAME == "master") {
+                              sh ('helm install --atomic --wait-for-jobs $HELM_DEPLOY_NAME ./$HELM_CHART_NAME --namespace $NS_PROD \
+                                   --set repousername=$REPOUSERNAME_PROD --set reponame=$REPONAME_PROD --set repotoken=$REPOTOKEN_PROD \
+                                   --set initimg=$REGISTRY/$INIT_REPO:$VERSION --set backendimg=$REGISTRY/$BACKEND_APP_REPO:$VERSION --set statdataimg=$REGISTRY/$GET_STATIC_REPO:$VERSION \
+                                   --set dbname=$DBNAME_PROD --set dbusername=$DBUSERNAME_PROD --set dbhost=$DBHOST_PROD --set dbpassword=$DBPASS_PROD ')
+                          } else {
+                              sh ('helm install --atomic --wait-for-jobs $HELM_DEPLOY_NAME ./$HELM_CHART_NAME --namespace $NS_TEST \
+                                   --set repousername=$REPOUSERNAME_TEST --set reponame=$REPONAME_TEST --set repotoken=$REPOTOKEN_TEST \
+                                   --set initimg=$REGISTRY/$INIT_REPO:$VERSION --set backendimg=$REGISTRY/$BACKEND_APP_REPO:$VERSION --set statdataimg=$REGISTRY/$GET_STATIC_REPO:$VERSION \
+                                   --set dbname=$DBNAME_TEST --set dbusername=$DBUSERNAME_TEST --set dbhost=$DBHOST_TEST --set dbpassword=$DBPASS_TEST ')
+                          }
+                        } catch(Exception b) {
+                            if (env.BRANCH_NAME == "master") {
+                                sh ('helm install --atomic --wait-for-jobs $HELM_DEPLOY_NAME ./$HELM_CHART_NAME --namespace $NS_PROD \
+                                     --set repousername=$REPOUSERNAME_PROD --set reponame=$REPONAME_PROD --set repotoken=$REPOTOKEN_PROD \
+                                     --set initimg=$REGISTRY/$INIT_REPO:$VERSION --set backendimg=$REGISTRY/$BACKEND_APP_REPO:$VERSION --set statdataimg=$REGISTRY/$GET_STATIC_REPO:$VERSION \
+                                     --set dbname=$DBNAME_PROD --set dbusername=$DBUSERNAME_PROD --set dbhost=$DBHOST_PROD --set dbpassword=$DBPASS_PROD ')
+                            } else {
+                                sh ('helm install --atomic --wait-for-jobs $HELM_DEPLOY_NAME ./$HELM_CHART_NAME --namespace $NS_TEST \
+                                     --set repousername=$REPOUSERNAME_TEST --set reponame=$REPONAME_TEST --set repotoken=$REPOTOKEN_TEST \
+                                     --set initimg=$REGISTRY/$INIT_REPO:$VERSION --set backendimg=$REGISTRY/$BACKEND_APP_REPO:$VERSION --set statdataimg=$REGISTRY/$GET_STATIC_REPO:$VERSION \
+                                     --set dbname=$DBNAME_TEST --set dbusername=$DBUSERNAME_TEST --set dbhost=$DBHOST_TEST --set dbpassword=$DBPASS_TEST ')
+                            }
+                        }
+                    }
+                  }
+                }
+            }
+        }
+
+  }
+}

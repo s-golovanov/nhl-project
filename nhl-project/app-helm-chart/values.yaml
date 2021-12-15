@@ -1,0 +1,25 @@
+# Values for main application db
+dbname: dbname
+dbhost: host.rds.db
+dbusername: dbuser
+dbpassword: dbpassword
+
+
+# Values for GitHub repo with static data of the app
+repousername: repouser
+repotoken: repopassword
+reponame: reponame
+
+
+# Image for init/update jobs
+initimg: dockerimg
+# Image for static data job
+statdataimg: dockerimg
+# Image for backend app
+backendimg: dockerimg
+# Image for nginx
+nginximg: nginx:1.20.2-alpine
+# Image for nginx prometheus exporter
+nginxexporterimg: nginx/nginx-prometheus-exporter:0.9.0
+# Name frontend svc
+frontsvcname: svc-front-app

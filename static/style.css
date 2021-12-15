@@ -1,0 +1,21 @@
+body {
+        background: url("/static/ice.jpg") no-repeat center center fixed transparent;
+        -webkit-background-size: cover;
+        -moz-background-size: cover;
+        -o-background-size: cover;
+        background-size: cover;
+}
+
+td {
+        width: auto;
+        text-align: center;
+        vertical-align: middle;
+        border: 2px solid black;
+        padding: 5px;
+}
+
+table {
+        margin: auto;
+        font: 20px britannic;
+        font-weight: 700;
+}

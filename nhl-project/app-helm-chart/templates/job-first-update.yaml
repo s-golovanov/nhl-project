@@ -1,0 +1,30 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ .Release.Name }}-first-upd
+spec:
+  schedule: "0 0 1 * *"
+  jobTemplate:
+    spec:
+      backoffLimit: 5
+      template:
+        spec:
+          containers:
+          - name: {{ .Release.Name }}-first-upd
+            image: {{ .Values.initimg }}
+            env:
+              - name: DB_USER
+                valueFrom:
+                  secretKeyRef:
+                    key:  dbusername
+                    name: {{ .Release.Name }}-auth-db
+              - name: DB_PASSWORD
+                valueFrom:
+                  secretKeyRef:
+                    key:  dbpassword
+                    name: {{ .Release.Name }}-auth-db
+              - name: DB_HOST
+                value: {{ .Values.dbhost }}
+              - name: DB_NAME
+                value: {{ .Values.dbname }}
+          restartPolicy: OnFailure
